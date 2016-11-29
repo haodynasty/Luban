@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.support.annotation.NonNull;
+import android.text.TextUtils;
 import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
@@ -23,11 +24,11 @@ import static top.zibin.luban.Preconditions.checkNotNull;
 
 public class Luban {
 
-    public static final int FIRST_GEAR = 1;
+    private static final int FIRST_GEAR = 1;
     public static final int THIRD_GEAR = 3;
 
     private static final String TAG = "Luban";
-    public static String DEFAULT_DISK_CACHE_DIR = "luban_disk_cache";
+    private static String DEFAULT_DISK_CACHE_DIR = "luban_disk_cache";
 
     private static volatile Luban INSTANCE;
 
@@ -36,8 +37,9 @@ public class Luban {
     private OnCompressListener compressListener;
     private File mFile;
     private int gear = THIRD_GEAR;
+    private String filename;
 
-    Luban(File cacheDir) {
+    private Luban(File cacheDir) {
         mCacheDir = cacheDir;
     }
 
@@ -48,7 +50,7 @@ public class Luban {
      * @param context A context.
      * @see #getPhotoCacheDir(android.content.Context, String)
      */
-    public static File getPhotoCacheDir(Context context) {
+    private static synchronized File getPhotoCacheDir(Context context) {
         return getPhotoCacheDir(context, Luban.DEFAULT_DISK_CACHE_DIR);
     }
 
@@ -60,7 +62,7 @@ public class Luban {
      * @param cacheName The name of the subdirectory in which to store the cache.
      * @see #getPhotoCacheDir(android.content.Context)
      */
-    public static File getPhotoCacheDir(Context context, String cacheName) {
+    private static File getPhotoCacheDir(Context context, String cacheName) {
         File cacheDir = context.getCacheDir();
         if (cacheDir != null) {
             File result = new File(cacheDir, cacheName);
@@ -68,6 +70,12 @@ public class Luban {
                 // File wasn't able to create a directory, or the result exists but not a directory
                 return null;
             }
+
+            File noMedia = new File(cacheDir + "/.nomedia");
+            if (!noMedia.mkdirs() && (!noMedia.exists() || !noMedia.isDirectory())) {
+                return null;
+            }
+
             return result;
         }
         if (Log.isLoggable(TAG, Log.ERROR)) {
@@ -163,6 +171,14 @@ public class Luban {
         return this;
     }
 
+    /**
+     * @deprecated
+     */
+    public Luban setFilename(String filename) {
+        this.filename = filename;
+        return this;
+    }
+
     public Observable<File> asObservable() {
         if (gear == FIRST_GEAR)
             return Observable.just(mFile).map(new Func1<File, File>() {
@@ -182,7 +198,8 @@ public class Luban {
     }
 
     private File thirdCompress(@NonNull File file) {
-        String thumb = mCacheDir.getAbsolutePath() + "/" + System.currentTimeMillis();
+        String thumb = mCacheDir.getAbsolutePath() + File.separator +
+                (TextUtils.isEmpty(filename) ? System.currentTimeMillis() : filename) + ".jpg";
 
         double size;
         String filePath = file.getAbsolutePath();
@@ -246,7 +263,9 @@ public class Luban {
         int shortSide = 1280;
 
         String filePath = file.getAbsolutePath();
-        String thumbFilePath = mCacheDir.getAbsolutePath() + "/" + System.currentTimeMillis();
+        String thumbFilePath = mCacheDir.getAbsolutePath() + File.separator +
+                (TextUtils.isEmpty(filename) ? System.currentTimeMillis() : filename) + ".jpg";
+
         long size = 0;
         long maxSize = file.length() / 5;
 
@@ -425,17 +444,19 @@ public class Luban {
         int options = 100;
         bitmap.compress(Bitmap.CompressFormat.JPEG, options, stream);
 
-        while (stream.toByteArray().length / 1024 > size) {
+        while (stream.toByteArray().length / 1024 > size && options > 6) {
             stream.reset();
             options -= 6;
             bitmap.compress(Bitmap.CompressFormat.JPEG, options, stream);
         }
+        bitmap.recycle();
 
         try {
             FileOutputStream fos = new FileOutputStream(filePath);
             fos.write(stream.toByteArray());
             fos.flush();
             fos.close();
+            stream.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
